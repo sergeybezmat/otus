@@ -1,0 +1,171 @@
+# Домашнее задание №1
+Работа с уровнями изоляции транзакции в PostgreSQL
+**Цель:**
+* научиться работать с Google Cloud Platform на уровне Google Compute Engine (IaaS) /ЯО
+* научиться управлять уровнем изолции транзации в PostgreSQL и понимать особенность работы уровней read commited и repeatable read
+## Создаем базу данных otus
+`postgres=# create database otus;`
+
+```
+                                                       List of databases
+   Name    |  Owner   | Encoding | Locale Provider |   Collate   |    Ctype    | ICU Locale | ICU Rules |   Access privileges
+-----------+----------+----------+-----------------+-------------+-------------+------------+-----------+-----------------------
+ otus      | postgres | UTF8     | libc            | en_US.UTF-8 | en_US.UTF-8 |            |           |
+```
+
+## Отключаем *Autocommit*
+`otus=# \set AUTOCOMMIT off`
+
+### Проверяем значение параметра *Autocommit*
+```
+otus=# \echo :AUTOCOMMIT
+off
+```
+## Создаем таблицу *persons*
+```
+otus=# create table persons(id serial, first_name text, second_name text);
+CREATE TABLE
+```
+### Заполняем таблицу данными
+```
+otus=*# insert into persons(first_name, second_name) values('ivan', 'ivanov');
+INSERT 0 1
+```
+```
+otus=*# into persons(first_name, second_name) values('petr', 'petrov');
+INSERT 0 1
+```
+### Выполняем *commit*
+
+`commit;`
+
+## Проверяем текущий уровень изоляции
+```
+otus=*# show transaction isolation level;
+ transaction_isolation
+-----------------------
+ read committed
+(1 row)
+```
+
+## Начинаем новую транзакцию с уровнем изоляции *read committed*
+```
+otus=# begin;
+BEGIN
+```
+
+### В первой сессии добавиляем новую запись в таблицу *persons*
+```
+insert into persons(first_name, second_name) values('sergey', 'sergeev');
+otus=*# insert into persons(first_name, second_name) values('sergey', 'sergeev');
+INSERT 0 1
+```
+
+### Проверяем наполение таблицы *persons* во второй сессии
+```
+otus=*# select * from persons;
+ id | first_name | second_name
+----+------------+-------------
+  1 | ivan       | ivanov
+  2 | petr       | petrov
+(2 rows)
+```
+***Новая запись не видна во второй сессии, так как транзакция в первой сессии не была завершена***
+
+### Завершаем первую транзакцию
+```
+otus=*# commit;
+COMMIT
+```
+
+### Проверяем наполение таблицы *persons* во второй сессии
+```
+otus=*# select * from persons;
+ id | first_name | second_name
+----+------------+-------------
+  1 | ivan       | ivanov
+  2 | petr       | petrov
+  3 | sergey     | sergeev
+(3 rows)
+```
+***Новая запись появилась во второй сессии, так как транзакция в первой сессии была завершена***
+
+### Завершаем транзакцию во второй сессии
+```
+otus=*# commit;
+COMMIT
+```
+## Аналогично проверяем для уровня изоляции *repeatable read*
+
+### Изменяем уровень изоляции для обоих сессий
+```
+otus=# set transaction isolation level repeatable read;
+SET
+```
+### Проверяем уровень изоляции
+```
+otus=*# show transaction isolation level;
+ transaction_isolation
+-----------------------
+ repeatable read
+(1 row)
+```
+### В первой сессии добавиляем новую запись в таблицу *persons*
+```
+insert into persons(first_name, second_name) values('sveta', 'svetova');
+otus=*# insert into persons(first_name, second_name) values('sveta', 'svetova');
+INSERT 0 1
+```
+### Проверяем наполение таблицы *persons* во второй сессии
+```
+otus=*# select * from persons;
+ id | first_name | second_name
+----+------------+-------------
+  1 | ivan       | ivanov
+  2 | petr       | petrov
+  3 | sergey     | sergeev
+(3 rows)
+```
+***Новая запись не видна во второй сессии, так как при уровне изоляции repeatable read в начале транзакции создается снимок данных и вывод не включает данные, которые попали в таблицу во время действия этой транзакции***
+
+### Завершаем транзакцию в первой сессии
+```
+otus=*# commit;
+COMMIT
+```
+### Проверяем наполение таблицы *persons* во второй сессии
+```
+otus=*# select * from persons;
+ id | first_name | second_name
+----+------------+-------------
+  1 | ivan       | ivanov
+  2 | petr       | petrov
+  3 | sergey     | sergeev
+(3 rows)
+```
+***Новая запись не видна во второй сессии, так как при уровне изоляции repeatable read в начале транзакции создается снимок данных и вывод не включает данные, которые попали в таблицу во время действия этой транзакции***
+
+
+### Завершаем транзакцию во второй сессии
+```
+otus=*# commit;
+COMMIT
+```
+### Проверяем наполение таблицы *persons* во второй сессии
+```
+otus=# select * from persons;
+ id | first_name | second_name
+----+------------+-------------
+  1 | ivan       | ivanov
+  2 | petr       | petrov
+  3 | sergey     | sergeev
+  4 | sveta      | svetova
+(4 rows)
+```
+***Новая запись попала в таблицу, так как обе транзакции были завершены:***
+* завершение первой транзакции добаваило строку id=4 в таблицу
+* завершение второй транзакции сбросило снимок данных для второй сесии и данные в таблицы были актуализированы
+
+# Выводы:
+* Уровень изоляции read committed обеспечивает видимость только зафиксированных данных.
+* Уровень изоляции repeatable read гарантирует, что данные, прочитанные в транзакции, не изменятся другими транзакциями до ее завершения.
